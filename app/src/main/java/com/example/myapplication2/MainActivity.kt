@@ -1,6 +1,5 @@
 package com.example.myapplication2
 
-import ModelRenderer
 import android.opengl.GLSurfaceView
 import android.os.Bundle
 import androidx.activity.enableEdgeToEdge
