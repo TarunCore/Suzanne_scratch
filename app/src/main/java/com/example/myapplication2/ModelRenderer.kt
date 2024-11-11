@@ -2,115 +2,225 @@
 import android.content.Context
 import android.opengl.GLES30
 import android.opengl.GLSurfaceView
+import android.opengl.Matrix
 import android.util.Log
-import java.io.BufferedReader
-import java.io.InputStreamReader
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.FloatBuffer
 import javax.microedition.khronos.egl.EGLConfig
 import javax.microedition.khronos.opengles.GL10
+import kotlin.math.sin
 
 class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
     private var programId = 0
     private var vertexBuffer: FloatBuffer? = null
+    private var colorBuffer: FloatBuffer? = null
+    private var indexBuffer: ByteBuffer? = null
     private val TAG = "ModelRenderer"
 
-    // Sample triangle vertices
-    private val triangleCoords = floatArrayOf(
-        0.0f, 0.622008459f, 0.0f,      // top
-        -0.5f, -0.311004243f, 0.0f,    // bottom left
-        0.5f, -0.311004243f, 0.0f      // bottom right
+    // MVP matrices
+    private val mvpMatrix = FloatArray(16)
+    private val projectionMatrix = FloatArray(16)
+    private val viewMatrix = FloatArray(16)
+    private val modelMatrix = FloatArray(16)
+
+    private var angle = 0f
+
+    // Cube vertices (x, y, z)
+    private val cubeCoords = floatArrayOf(
+        // Front face
+        -0.5f, -0.5f,  0.5f,
+        0.5f, -0.5f,  0.5f,
+        0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f,  0.5f,
+
+        // Back face
+        -0.5f, -0.5f, -0.5f,
+        -0.5f,  0.5f, -0.5f,
+        0.5f,  0.5f, -0.5f,
+        0.5f, -0.5f, -0.5f,
+
+        // Top face
+        -0.5f,  0.5f, -0.5f,
+        -0.5f,  0.5f,  0.5f,
+        0.5f,  0.5f,  0.5f,
+        0.5f,  0.5f, -0.5f,
+
+        // Bottom face
+        -0.5f, -0.5f, -0.5f,
+        0.5f, -0.5f, -0.5f,
+        0.5f, -0.5f,  0.5f,
+        -0.5f, -0.5f,  0.5f,
+
+        // Right face
+        0.5f, -0.5f, -0.5f,
+        0.5f,  0.5f, -0.5f,
+        0.5f,  0.5f,  0.5f,
+        0.5f, -0.5f,  0.5f,
+
+        // Left face
+        -0.5f, -0.5f, -0.5f,
+        -0.5f, -0.5f,  0.5f,
+        -0.5f,  0.5f,  0.5f,
+        -0.5f,  0.5f, -0.5f
+    )
+
+    // Colors for each vertex
+    private val colors = floatArrayOf(
+        // Front face (red)
+        1.0f, 0.0f, 0.0f, 1.0f,
+        1.0f, 0.0f, 0.0f, 1.0f,
+        1.0f, 0.0f, 0.0f, 1.0f,
+        1.0f, 0.0f, 0.0f, 1.0f,
+
+        // Back face (green)
+        0.0f, 1.0f, 0.0f, 1.0f,
+        0.0f, 1.0f, 0.0f, 1.0f,
+        0.0f, 1.0f, 0.0f, 1.0f,
+        0.0f, 1.0f, 0.0f, 1.0f,
+
+        // Top face (blue)
+        0.0f, 0.0f, 1.0f, 1.0f,
+        0.0f, 0.0f, 1.0f, 1.0f,
+        0.0f, 0.0f, 1.0f, 1.0f,
+        0.0f, 0.0f, 1.0f, 1.0f,
+
+        // Bottom face (yellow)
+        1.0f, 1.0f, 0.0f, 1.0f,
+        1.0f, 1.0f, 0.0f, 1.0f,
+        1.0f, 1.0f, 0.0f, 1.0f,
+        1.0f, 1.0f, 0.0f, 1.0f,
+
+        // Right face (magenta)
+        1.0f, 0.0f, 1.0f, 1.0f,
+        1.0f, 0.0f, 1.0f, 1.0f,
+        1.0f, 0.0f, 1.0f, 1.0f,
+        1.0f, 0.0f, 1.0f, 1.0f,
+
+        // Left face (cyan)
+        0.0f, 1.0f, 1.0f, 1.0f,
+        0.0f, 1.0f, 1.0f, 1.0f,
+        0.0f, 1.0f, 1.0f, 1.0f,
+        0.0f, 1.0f, 1.0f, 1.0f
+    )
+
+    // Indices for drawing the triangles
+    private val indices = byteArrayOf(
+        0, 1, 2,    0, 2, 3,     // Front
+        4, 5, 6,    4, 6, 7,     // Back
+        8, 9, 10,   8, 10, 11,   // Top
+        12, 13, 14, 12, 14, 15,  // Bottom
+        16, 17, 18, 16, 18, 19,  // Right
+        20, 21, 22, 20, 22, 23   // Left
     )
 
     override fun onSurfaceCreated(gl: GL10?, config: EGLConfig?) {
-        // Set background color to dark gray for better visibility
         GLES30.glClearColor(0.2f, 0.2f, 0.2f, 1.0f)
+        GLES30.glEnable(GLES30.GL_DEPTH_TEST)
 
         // Initialize vertex buffer
-        val bb = ByteBuffer.allocateDirect(triangleCoords.size * 4)
-        bb.order(ByteOrder.nativeOrder())
-        vertexBuffer = bb.asFloatBuffer().apply {
-            put(triangleCoords)
-            position(0)
-        }
+        vertexBuffer = ByteBuffer.allocateDirect(cubeCoords.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .apply {
+                put(cubeCoords)
+                position(0)
+            }
+
+        // Initialize color buffer
+        colorBuffer = ByteBuffer.allocateDirect(colors.size * 4)
+            .order(ByteOrder.nativeOrder())
+            .asFloatBuffer()
+            .apply {
+                put(colors)
+                position(0)
+            }
+
+        // Initialize index buffer
+        indexBuffer = ByteBuffer.allocateDirect(indices.size)
+            .order(ByteOrder.nativeOrder())
+            .apply {
+                put(indices)
+                position(0)
+            }
 
         try {
-            // Load and compile shaders
             val vertexShaderCode = loadShaderFromAssets("vertex_shader.glsl")
             val fragmentShaderCode = loadShaderFromAssets("fragment_shader.glsl")
-
-            Log.d(TAG, "Vertex Shader Code:\n$vertexShaderCode")
-            Log.d(TAG, "Fragment Shader Code:\n$fragmentShaderCode")
 
             val vertexShader = loadShader(GLES30.GL_VERTEX_SHADER, vertexShaderCode)
             val fragmentShader = loadShader(GLES30.GL_FRAGMENT_SHADER, fragmentShaderCode)
 
-            // Create shader program
             programId = GLES30.glCreateProgram()
             GLES30.glAttachShader(programId, vertexShader)
             GLES30.glAttachShader(programId, fragmentShader)
             GLES30.glLinkProgram(programId)
 
-            // Check linking status
             val linkStatus = IntArray(1)
             GLES30.glGetProgramiv(programId, GLES30.GL_LINK_STATUS, linkStatus, 0)
             if (linkStatus[0] != GLES30.GL_TRUE) {
-                val log = GLES30.glGetProgramInfoLog(programId)
-                Log.e(TAG, "Error linking program: $log")
-                throw RuntimeException("Error linking program: $log")
+                throw RuntimeException("Error linking program: " + GLES30.glGetProgramInfoLog(programId))
             }
 
-            // Delete shaders as they're linked into the program now and no longer needed
             GLES30.glDeleteShader(vertexShader)
             GLES30.glDeleteShader(fragmentShader)
 
-            Log.d(TAG, "Program created successfully with ID: $programId")
         } catch (e: Exception) {
             Log.e(TAG, "Error creating program", e)
         }
     }
 
     override fun onSurfaceChanged(gl: GL10?, width: Int, height: Int) {
-        Log.d(TAG, "Surface changed: width=$width, height=$height")
         GLES30.glViewport(0, 0, width, height)
+
+        val ratio = width.toFloat() / height.toFloat()
+
+        // Set up projection matrix
+        Matrix.frustumM(projectionMatrix, 0, -ratio, ratio, -1f, 1f, 3f, 7f)
+        // Set up camera position
+        Matrix.setLookAtM(viewMatrix, 0, 0f, 0f, -4f, 0f, 0f, 0f, 0f, 1f, 0f)
     }
 
     override fun onDrawFrame(gl: GL10?) {
+        GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT or GLES30.GL_DEPTH_BUFFER_BIT)
+
         try {
-            // Clear the background
-            GLES30.glClear(GLES30.GL_COLOR_BUFFER_BIT)
-
-            // Use shader program
             GLES30.glUseProgram(programId)
-            checkGlError("glUseProgram")
 
-            // Get position attribute location
+            // Get handle to vertex positions
             val positionHandle = GLES30.glGetAttribLocation(programId, "vPosition")
-            Log.d(TAG, "Position handle: $positionHandle")
+            val colorHandle = GLES30.glGetAttribLocation(programId, "vColor")
+            val mvpMatrixHandle = GLES30.glGetUniformLocation(programId, "uMVPMatrix")
 
-            if (positionHandle == -1) {
-                throw RuntimeException("vPosition attribute not found")
-            }
+            // Update rotation angle
+            angle += 2f
 
-            // Enable vertex array
+            // Set up model matrix with rotation
+            Matrix.setIdentityM(modelMatrix, 0)
+            Matrix.rotateM(modelMatrix, 0, angle, 0.5f, 1f, 0.3f)
+
+            // Calculate the projection and view transformation
+            Matrix.multiplyMM(mvpMatrix, 0, viewMatrix, 0, modelMatrix, 0)
+            Matrix.multiplyMM(mvpMatrix, 0, projectionMatrix, 0, mvpMatrix, 0)
+
+            // Apply the projection and view transformation
+            GLES30.glUniformMatrix4fv(mvpMatrixHandle, 1, false, mvpMatrix, 0)
+
+            // Enable vertex arrays
             GLES30.glEnableVertexAttribArray(positionHandle)
-            checkGlError("glEnableVertexAttribArray")
+            GLES30.glEnableVertexAttribArray(colorHandle)
 
-            // Prepare the triangle coordinate data
-            GLES30.glVertexAttribPointer(
-                positionHandle, 3,
-                GLES30.GL_FLOAT, false,
-                0, vertexBuffer
-            )
-            checkGlError("glVertexAttribPointer")
+            // Set the vertex attributes
+            GLES30.glVertexAttribPointer(positionHandle, 3, GLES30.GL_FLOAT, false, 0, vertexBuffer)
+            GLES30.glVertexAttribPointer(colorHandle, 4, GLES30.GL_FLOAT, false, 0, colorBuffer)
 
-            // Draw the triangle
-            GLES30.glDrawArrays(GLES30.GL_TRIANGLES, 0, 3)
-            checkGlError("glDrawArrays")
+            // Draw the cube
+            GLES30.glDrawElements(GLES30.GL_TRIANGLES, indices.size, GLES30.GL_UNSIGNED_BYTE, indexBuffer)
 
-            // Disable vertex array
+            // Disable vertex arrays
             GLES30.glDisableVertexAttribArray(positionHandle)
+            GLES30.glDisableVertexAttribArray(colorHandle)
+
         } catch (e: Exception) {
             Log.e(TAG, "Error in onDrawFrame", e)
         }
@@ -121,33 +231,17 @@ class ModelRenderer(private val context: Context) : GLSurfaceView.Renderer {
         GLES30.glShaderSource(shader, shaderCode)
         GLES30.glCompileShader(shader)
 
-        // Check compilation status
         val compileStatus = IntArray(1)
         GLES30.glGetShaderiv(shader, GLES30.GL_COMPILE_STATUS, compileStatus, 0)
         if (compileStatus[0] != GLES30.GL_TRUE) {
             val log = GLES30.glGetShaderInfoLog(shader)
-            Log.e(TAG, "Error compiling shader: $log")
             GLES30.glDeleteShader(shader)
             throw RuntimeException("Error compiling shader: $log")
         }
-
         return shader
     }
 
     private fun loadShaderFromAssets(fileName: String): String {
-        return try {
-            context.assets.open(fileName).bufferedReader().use { it.readText() }
-        } catch (e: Exception) {
-            Log.e(TAG, "Error loading shader from assets: $fileName", e)
-            throw RuntimeException("Error loading shader: $fileName", e)
-        }
-    }
-
-    private fun checkGlError(operation: String) {
-        val error = GLES30.glGetError()
-        if (error != GLES30.GL_NO_ERROR) {
-            Log.e(TAG, "$operation: glError $error")
-            throw RuntimeException("$operation: glError $error")
-        }
+        return context.assets.open(fileName).bufferedReader().use { it.readText() }
     }
 }
